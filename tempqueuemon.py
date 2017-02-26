@@ -1,10 +1,5 @@
 #!/usr/bin/env python
  
-# ToDo
-# - include PushMon alert pipe in each class definition to allow for selective monitoring by device
-# - include Xively Device ID in each class definition to allow flexibility
-# - Break out the Temp Sensor handling code from the radio receiving code to allow for completely different uses of RF
-
 import os
 import sys
 import time
@@ -15,19 +10,11 @@ import requests
 import urllib2
 import json
 import sqlite3
+import ConfigParser
+
 import rfmon_commonsensor as rfbase
 import paho.mqtt.client as mqtt
 
-
-##STATUSCAKE_URL="https://push.statuscake.com/?PK=50bc5a406146489&TestID=510385"
-##PUSHMON_URL="http://ping.pushmon.com/pushmon/ping/"
-##PUSHMON_ID="WmpnHI"
-##PUSHINGBOX_URL="http://api.pushingbox.com/pushingbox"
-##PUSHINGBOX_ID="vF6098C58E4A4D96"
-
-GROVESTREAMS_URL = "http://grovestreams.com/api/feed?asPut&api_key=521dfde4-e9e2-36b6-bf96-18242254873f"
-
-DBLOCATION="/media/nas-rpi/TempMonData/rfmonDB.db"
 
 DEFAULT_API_KEY = "IjPjyGRBNX4215uvu7sAB86NBjCtklQByFAIb1VoJT2TUeXF"
 DEFAULT_FEED_ID = "1785749146"
@@ -35,22 +22,27 @@ DEFAULT_FEED_ID = "1785749146"
 GRILL_API_KEY   = "JEksVghaisFnIpO6NyQM51ITpVeKZ5K1r8xZEBc934zZtDsl"
 GRILL_FEED_ID   = "1130159067"
 
-Q_BROKER="127.0.0.1"
-Q_PORT=1883
-Q_TOPIC="hello"
-#Q_BROKER="m11.cloudmqtt.com"
-#Q_PORT=19873
-#Q_USER="prcegtgc"
-#Q_PSWD="7frPa1U_VXqA"
-
+# ---- Globals ----
 IsConnected=False
 IsCnxnErr=False
 
-
 SLEEP_SECONDS = 1 
 
-#Global list of our sensors
-newSensors = {}
+config = None
+newSensors = {}  #Global list of our sensors
+
+# ----------------------------------------------------------------
+def getConfigExt( configSysIn, sectionIn, optionIn, defaultIn=None ):
+    optionOut=defaultIn
+    if( configSysIn.has_option( sectionIn, optionIn)):
+        optionOut = configSysIn.get(sectionIn, optionIn)
+    return optionOut
+
+def getConfigExtBool( configSysIn, sectionIn, optionIn, defaultIn=False ):
+    optionOut=defaultIn
+    if( configSysIn.has_option( sectionIn, optionIn)):
+        optionOut = configSysIn.getboolean(sectionIn, optionIn)
+    return optionOut
 
 
 def initSensors( sensorArrayIn ):
@@ -104,7 +96,7 @@ def on_connect(client, userdata, flags, rc):
         IsCnxnErr=True
     # Subscribing in on_connect() means that if we lose the connection and
     # reconnect then subscriptions will be renewed.
-    client.subscribe(Q_TOPIC)
+    client.subscribe( config.get("DEFAULT", 'topic') )
 
 def on_disconnect(client, userdata, rc):
     global IsConnected
@@ -147,7 +139,7 @@ def on_message(client, userdata, msg):
 
         # SQLITE DB write
         try:
-	    conn = sqlite3.connect(DBLOCATION)
+	    conn = sqlite3.connect(config.get("DEFAULT",'dblocation'))
 	    curs = conn.cursor()
 	    curs.execute("INSERT INTO rawdata (nodeid, seqnum, metricid, metricguid, metricname, metric, metricdt) VALUES (?,?,?,?,?,?,?) ", \
 			( nodeID, seq, parms[x][0], _metricguid, _metricname, _metric, myDateTime))
@@ -168,7 +160,7 @@ def on_message(client, userdata, msg):
 
         # GroveStream push for all streams for a node (component)
         try:
-            url = GROVESTREAMS_URL+"&seq="+str(seq)+"&compId="+n.getComponentID()+metricsString
+            url = config.get("DEFAULT",'grovestreams_url')+"&seq="+str(seq)+"&compId="+n.getComponentID()+metricsString
             #print url
 	    urlhandle = urllib2.urlopen(url) 
 	    urlhandle.close() 
@@ -180,6 +172,8 @@ def on_message(client, userdata, msg):
     else:
         print "- TOO SOON" 
 
+    sys.stdout.flush()
+
 # main program entry point - runs continuously updating our datastream with the
 def run(client):
 
@@ -187,11 +181,14 @@ def run(client):
 
     client.on_connect = on_connect
     client.on_disconnect = on_disconnect
-    #client.on_log = on_log
     client.on_message = on_message
-    #client.username_pw_set(Q_USER, Q_PSWD)
+    if( getConfigExtBool(config, "DEFAULT", 'qlog_enable') ):
+        client.on_log = on_log
+    if( getConfigExt(config, "DEFAULT", 'user', None) and getConfigExt(config, "DEFAULT", 'pswd', None) ):
+        print( "Setting User and pswd")
+        client.username_pw_set( config.get("DEFAULT", 'user'), config.get("DEFAULT", 'pswd') )
 
-    client.connect(Q_BROKER, Q_PORT, 60)
+    client.connect(config.get("DEFAULT", 'broker'), config.get("DEFAULT", 'port'), 60)
     retry=0
     while( (not IsConnected) and (not IsCnxnErr) and retry <= 10):
         print("Waiting for Connect")
@@ -207,8 +204,21 @@ def run(client):
  
     client.loop_forever()
 
+# -------------------------------------
+
+client = mqtt.Client()
+
 try:
-    client = mqtt.Client()
+    configFile=os.path.splitext(__file__)[0]+".conf"
+    if( not os.path.isfile( configFile )): 
+        print( "Config file [%s] was not found.  Exiting" ) % configFile
+        exit()
+
+    config = ConfigParser.SafeConfigParser()
+    config.read(configFile)
+    if( getConfigExtBool(config, "DEFAULT", 'debug') ): 
+        print("Using config file [%s]") % configFile
+
     run(client)
 except KeyboardInterrupt:
     print "Keyboard Interrupt..."
