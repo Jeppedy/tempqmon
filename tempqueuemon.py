@@ -24,7 +24,8 @@ GRILL_FEED_ID   = "1130159067"
 
 # ---- Globals ----
 IsConnected=False
-IsCnxnErr=False
+cnxnRC=-1
+
 
 SLEEP_SECONDS = 1 
 
@@ -53,7 +54,7 @@ def initSensors( sensorArrayIn ):
         (["1", "pittemp", "PitTemp"], ["2", "food1temp", "Food1Temp"], ["3", "food2temp", "Food2Temp"]) ]
     , ["C1", "Nathan", 600, DEFAULT_API_KEY, DEFAULT_FEED_ID, "nathan",
         (["unused", "", ""], ["1", "humidity", "Humidity"], ["2", "C1_temp", "C1_Temp"]) ]
-    , ["C3", "Freezer", 300, DEFAULT_API_KEY, DEFAULT_FEED_ID, "freezer",
+    , ["D1", "Freezer", 285, DEFAULT_API_KEY, DEFAULT_FEED_ID, "freezer",
         (["1", "garagetemp", "GarageTemp"], ["2", "temp", "FreezerTemp"], ["3", "volts", "Voltage"]) ]
     , ["C5", "Plant",  1800, DEFAULT_API_KEY, DEFAULT_FEED_ID, "plant",
         (["1", "water", "WaterLevel"], ["unused", "", ""], ["3", "volts", "Voltage"] ) ]
@@ -88,12 +89,11 @@ def initSensors( sensorArrayIn ):
 
 # The callback for when the client receives a CONNACK response from the server.
 def on_connect(client, userdata, flags, rc):
-    global IsConnected,IsCnxnErr
+    global IsConnected,cnxnRC
     print("CB: Connected;rtn code [%d]"% (rc) )
+    cnxnRC=rc
     if( rc == 0 ):
         IsConnected=True
-    else:
-        IsCnxnErr=True
     # Subscribing in on_connect() means that if we lose the connection and
     # reconnect then subscriptions will be renewed.
     client.subscribe( config.get("DEFAULT", 'topic') )
@@ -112,7 +112,8 @@ def on_message(client, userdata, msg):
 
     #  Get message from queue
     recv_string=str(msg.payload)
-    print "Received msg [%s:%s]" % (msg.topic, recv_string)
+    if( getConfigExtBool(config, "DEFAULT", 'debug') ): 
+        print "Received msg [%s:%s]" % (msg.topic, recv_string)
 
     nodeID = rfbase.getNodeIDFromMsgString(recv_string)
     #print "Node: [%s]" % nodeID
@@ -190,13 +191,13 @@ def run(client):
 
     client.connect(config.get("DEFAULT", 'broker'), config.get("DEFAULT", 'port'), 60)
     retry=0
-    while( (not IsConnected) and (not IsCnxnErr) and retry <= 10):
+    while( (not IsConnected) and cnxnRC == -1 and retry <= 10):
         print("Waiting for Connect")
         time.sleep(.05)
         client.loop()
         retry += 1
-    if( not IsConnected or IsCnxnErr ):
-        print("No connection could be established")
+    if( not IsConnected ):
+        print("No connection could be established: rc[%d]") % cnxnRC
         return
 
 
