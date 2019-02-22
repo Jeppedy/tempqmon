@@ -1,1 +1,1 @@
-sudo nohup python ./tempqueueqmon.py >> tempqueuemon.out &
+sudo nohup python3 ./tempqueueqmon.py >> tempqueuemon.out &
